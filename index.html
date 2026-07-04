@@ -17,8 +17,9 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Ar
 button,input{font:inherit;color:inherit}
 button{border:0;background:none}
 .app{min-height:100dvh;padding:calc(24px + env(safe-area-inset-top)) 20px calc(24px + env(safe-area-inset-bottom));display:flex;flex-direction:column}
-.home{justify-content:center;gap:28px}
+.home{justify-content:center;gap:18px}
 .title{font-size:clamp(34px,13vw,64px);font-weight:200;letter-spacing:0;line-height:1;margin:0}
+.summary{color:var(--muted);font-size:13px;text-align:center;margin-top:-2px}
 .tiles{display:grid;gap:12px}
 .tile,.panel{background:rgba(255,255,255,.035);border:1px solid var(--line);border-radius:8px}
 .tile{min-height:74px;padding:18px;text-align:left}
@@ -26,7 +27,7 @@ button{border:0;background:none}
 .tile strong{display:block;font-weight:300;font-size:20px}
 .tile span{display:block;margin-top:7px;color:var(--muted);font-size:13px}
 .selected{border-color:rgba(152,200,186,.7)}
-.setup{justify-content:center;gap:22px}
+.setup{justify-content:flex-start;gap:18px;overflow:auto}
 .topline{display:flex;align-items:center;justify-content:space-between;gap:14px}
 .setup .topline h1{flex:1;text-align:center;font-size:clamp(24px,7vw,32px)}
 .topline .ghost{min-width:54px}
@@ -36,7 +37,15 @@ button{border:0;background:none}
 .rhythm{grid-template-columns:1fr 108px;align-items:center}
 .rhythm small{display:block;color:var(--muted);font-size:12px;margin-top:6px}
 .rhythm input{height:48px;text-align:center;background:#071014;border:1px solid var(--line);border-radius:7px;font-weight:300}
-.custom{grid-template-columns:repeat(4,1fr);gap:10px}
+.soundgrid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
+.sound{min-height:42px;border:1px solid var(--line);border-radius:7px;color:var(--muted)}
+.sound.selected{background:rgba(152,200,186,.09);color:var(--text)}
+.advanced{padding:0;overflow:hidden}
+.advanced summary{padding:18px;color:var(--muted);cursor:pointer;list-style:none}
+.advanced summary::-webkit-details-marker{display:none}
+.advanced[open] summary{border-bottom:1px solid var(--line)}
+.advanced .custom{padding:18px;background:transparent;border:0}
+.custom{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}
 .field label{display:block;font-size:11px;color:var(--muted);margin-bottom:7px}
 .field input{width:100%;height:42px;text-align:center;background:#071014;border:1px solid var(--line);border-radius:7px;font-weight:300}
 .duration{display:grid;gap:14px}
@@ -50,10 +59,15 @@ input[type=range]{width:100%;accent-color:var(--accent)}
 .corner{position:absolute;z-index:2;top:calc(18px + env(safe-area-inset-top));font-size:14px;color:var(--muted)}
 .time{left:18px}
 .mute{right:18px;padding:8px 0;color:var(--muted)}
-.end{right:18px;top:calc(52px + env(safe-area-inset-top));padding:8px 0;color:var(--muted)}
-.paused{position:absolute;bottom:calc(24px + env(safe-area-inset-bottom));color:var(--muted);font-size:14px;opacity:0}
-.paused.show{opacity:1}
+.pick{right:18px;top:calc(52px + env(safe-area-inset-top));padding:8px 0;color:var(--muted)}
+.end{right:18px;top:calc(86px + env(safe-area-inset-top));padding:8px 0;color:var(--muted)}
+.pause{position:absolute;inset:0;z-index:3;display:grid;place-items:center;background:rgba(7,16,20,.52);opacity:0;pointer-events:none;transition:opacity .16s linear}
+.pause.show{opacity:1;pointer-events:auto}
+.pausebox{width:min(310px,calc(100vw - 48px));padding:18px;background:rgba(16,27,32,.88);border:1px solid var(--line);border-radius:8px;display:grid;gap:10px}
+.smallbtn{min-height:48px;border:1px solid var(--line);border-radius:7px;color:var(--text)}
+.smallbtn.muted{color:var(--muted)}
 .done{justify-content:center;gap:24px;text-align:center}
+.actions{display:grid;gap:10px}
 .stats{color:var(--muted);line-height:1.8;font-weight:300}
 @media (min-width:700px){.app{max-width:720px;margin:0 auto}.tiles{grid-template-columns:repeat(2,1fr)}.tile:last-child{grid-column:1/-1}.session{max-width:none}.orb{width:min(68vmin,620px)}}
 </style>
@@ -71,16 +85,18 @@ const presets=[
   ["custom","Custom"]
 ];
 const names=["inhale","holdIn","exhale","holdOut"],labels=["Inhale","Hold","Exhale","Hold"];
+const sounds=[["ocean","Ocean"],["bowl","Bowl"],["tone","Tone"],["none","Silent"]];
 const app=document.getElementById("app");
-let data={preset:"coherent",patterns:copy(defaults),duration:5};
-let view="home",session=null,raf=0,holdTimer=0,longPress=false,wake=null;
-let audio={ctx:null,osc:null,air:null,drone:null,tone:null,airGain:null,droneGain:null,filter:null,delay:null,wet:null,fb:null,master:null,muted:false};
+let data={preset:"coherent",patterns:copy(defaults),duration:5,sound:"ocean"};
+let view="home",session=null,raf=0,holdTimer=0,longPress=false,wake=null,previewTimer=0;
+let audio={ctx:null,osc:null,air:null,drone:null,noise:null,tone:null,airGain:null,droneGain:null,noiseGain:null,filter:null,noiseFilter:null,delay:null,wet:null,fb:null,master:null,muted:false};
 
 // persistence
 function load(){
   try{
     const saved=JSON.parse(localStorage.getItem("breath.app")||"{}");
     if(saved.preset)data.preset=saved.preset;
+    if(saved.sound&&sounds.some(s=>s[0]===saved.sound))data.sound=saved.sound;
     if(saved.patterns)for(const id in defaults)if(Array.isArray(saved.patterns[id]))data.patterns[id]=saved.patterns[id].map(clean);
     if(Array.isArray(saved.custom)&&saved.custom.length===4)data.patterns.custom=saved.custom.map(clean);
     if(saved.duration)data.duration=Math.min(30,Math.max(1,+saved.duration||5));
@@ -102,10 +118,13 @@ async function ensureAudio(){
     audio.osc=audio.ctx.createOscillator();
     audio.air=audio.ctx.createOscillator();
     audio.drone=audio.ctx.createOscillator();
+    audio.noise=audio.ctx.createBufferSource();
     audio.tone=audio.ctx.createGain();
     audio.airGain=audio.ctx.createGain();
     audio.droneGain=audio.ctx.createGain();
+    audio.noiseGain=audio.ctx.createGain();
     audio.filter=audio.ctx.createBiquadFilter();
+    audio.noiseFilter=audio.ctx.createBiquadFilter();
     audio.delay=audio.ctx.createDelay(.5);
     audio.wet=audio.ctx.createGain();
     audio.fb=audio.ctx.createGain();
@@ -116,21 +135,28 @@ async function ensureAudio(){
     audio.osc.frequency.value=206;
     audio.air.frequency.value=412;
     audio.drone.frequency.value=98;
-    audio.tone.gain.value=audio.airGain.gain.value=audio.droneGain.gain.value=audio.master.gain.value=0;
+    audio.tone.gain.value=audio.airGain.gain.value=audio.droneGain.gain.value=audio.noiseGain.gain.value=audio.master.gain.value=0;
     audio.filter.type="lowpass";
     audio.filter.frequency.value=840;
     audio.filter.Q.value=.45;
+    audio.noiseFilter.type="lowpass";
+    audio.noiseFilter.frequency.value=900;
     audio.delay.delayTime.value=.16;
     audio.wet.gain.value=.045;
     audio.fb.gain.value=.14;
+    const n=audio.ctx.sampleRate*2,buf=audio.ctx.createBuffer(1,n,audio.ctx.sampleRate),ch=buf.getChannelData(0);
+    let last=0;
+    for(let i=0;i<n;i++){last=last*.985+(Math.random()*2-1)*.015;ch[i]=last}
+    audio.noise.buffer=buf;audio.noise.loop=true;
     audio.osc.connect(audio.tone);audio.tone.connect(audio.filter);
     audio.air.connect(audio.airGain);audio.airGain.connect(audio.filter);
     audio.drone.connect(audio.droneGain);audio.droneGain.connect(audio.filter);
+    audio.noise.connect(audio.noiseFilter);audio.noiseFilter.connect(audio.noiseGain);audio.noiseGain.connect(audio.master);
     audio.filter.connect(audio.master);
     audio.filter.connect(audio.delay);audio.delay.connect(audio.wet);audio.wet.connect(audio.master);
     audio.delay.connect(audio.fb);audio.fb.connect(audio.delay);
     audio.master.connect(audio.ctx.destination);
-    audio.osc.start();audio.air.start();audio.drone.start();
+    audio.osc.start();audio.air.start();audio.drone.start();audio.noise.start();
   }
   if(audio.ctx.state==="suspended")await audio.ctx.resume();
 }
@@ -141,22 +167,39 @@ function ramp(param,value,delay=.09){
   param.setValueAtTime(param.value,t);
   param.linearRampToValueAtTime(value,t+delay);
 }
-function shapeAudio(p){
+function shapeAudio(p,force=false){
   if(!audio.ctx||!audio.master)return;
-  let freq=206,tone=0,air=0,drone=0,master=0;
-  if(!audio.muted&&session&&session.running){
+  let freq=206,tone=0,air=0,drone=0,noise=0,master=0,airMul=2.01,wet=.045,filter=840,noiseFilter=900;
+  if(!audio.muted&&data.sound!=="none"&&((session&&session.running)||force)){
     const swell=Math.sin(Math.PI*p.t);
     master=.82;
-    if(p.kind===0){freq=206+112*p.ease;tone=.022+.018*swell;air=.004+.005*swell;drone=.0015}
-    else if(p.kind===2){freq=318-112*p.ease;tone=.02+.016*swell;air=.003+.004*swell;drone=.0015}
-    else{freq=p.kind===1?318:206;drone=.0045}
+    if(data.sound==="ocean"){
+      master=.9;filter=650;wet=.02;
+      noiseFilter=p.kind===0?650+650*p.ease:p.kind===2?1300-650*p.ease:p.kind===1?1200:640;
+      noise=(p.kind===0||p.kind===2)?.026+.052*swell:.008;
+      drone=(p.kind===1||p.kind===3)?.0018:0;
+    }else if(data.sound==="bowl"){
+      freq=p.kind===0?174+46*p.ease:p.kind===2?220-46*p.ease:p.kind===1?220:174;
+      airMul=1.5;filter=620;wet=.085;
+      tone=(p.kind===0||p.kind===2)?.024+.014*swell:.006;
+      air=(p.kind===0||p.kind===2)?.007+.005*swell:.0015;
+      drone=.004;
+    }else{
+      if(p.kind===0){freq=206+112*p.ease;tone=.022+.018*swell;air=.004+.005*swell;drone=.0015}
+      else if(p.kind===2){freq=318-112*p.ease;tone=.02+.016*swell;air=.003+.004*swell;drone=.0015}
+      else{freq=p.kind===1?318:206;drone=.0045}
+    }
   }
   ramp(audio.osc.frequency,freq);
-  ramp(audio.air.frequency,freq*2.01);
+  ramp(audio.air.frequency,freq*airMul);
   ramp(audio.drone.frequency,p.kind===1?103:94,.14);
+  ramp(audio.filter.frequency,filter,.12);
+  ramp(audio.noiseFilter.frequency,noiseFilter,.12);
+  ramp(audio.wet.gain,wet,.12);
   ramp(audio.tone.gain,tone);
   ramp(audio.airGain.gain,air);
   ramp(audio.droneGain.gain,drone,.12);
+  ramp(audio.noiseGain.gain,noise,.12);
   ramp(audio.master.gain,master,.08);
 }
 function silenceAudio(){
@@ -164,6 +207,14 @@ function silenceAudio(){
   if(audio.tone)ramp(audio.tone.gain,0,.06);
   if(audio.airGain)ramp(audio.airGain.gain,0,.06);
   if(audio.droneGain)ramp(audio.droneGain.gain,0,.06);
+  if(audio.noiseGain)ramp(audio.noiseGain.gain,0,.06);
+}
+async function previewSound(id=data.sound){
+  clearTimeout(previewTimer);
+  await ensureAudio();
+  if(id==="none"){silenceAudio();return}
+  shapeAudio({kind:0,t:.55,ease:.55},true);
+  previewTimer=setTimeout(()=>{if(!session||!session.running)silenceAudio()},850);
 }
 
 // animation
@@ -207,9 +258,10 @@ function renderMotion(e){
 
 // UI
 function renderHome(){
-  view="home";cancelAnimationFrame(raf);session=null;releaseWake();silenceAudio();
+  view="home";cancelAnimationFrame(raf);session=null;releaseWake();silenceAudio();app.onpointerdown=app.onpointerup=app.onpointercancel=null;
   app.className="app home";
-  app.innerHTML=`<h1 class="title">Breathe</h1><div class="tiles">${presets.map(p=>`<button class="tile ${p[0]===data.preset?"selected":""}" data-p="${p[0]}"><strong>${p[1]}</strong><span>${tileMeta(p[0])}</span></button>`).join("")}</div>`;
+  app.innerHTML=`<h1 class="title">Breathe</h1><button class="primary" id="quick">Start</button><div class="summary">${quickMeta()}</div><div class="tiles">${presets.map(p=>`<button class="tile ${p[0]===data.preset?"selected":""}" data-p="${p[0]}"><strong>${p[1]}</strong><span>${tileMeta(p[0])}</span></button>`).join("")}</div>`;
+  document.getElementById("quick").onclick=startSession;
   app.querySelectorAll(".tile").forEach(b=>b.onclick=()=>selectPreset(b.dataset.p));
 }
 function selectPreset(id){
@@ -217,12 +269,14 @@ function selectPreset(id){
 }
 function renderSetup(){
   view="setup";
+  app.onpointerdown=app.onpointerup=app.onpointercancel=null;
   const p=presets.find(x=>x[0]===data.preset);
   app.className="app setup";
   app.innerHTML=`<div class="topline"><button class="ghost" id="back">Home</button><h1>${p[1]}</h1><button class="ghost" id="reset">Reset</button></div>
   <div class="panel rhythm"><div><span>Breaths / minute</span><small id="cycle"></small></div><input id="bpm" inputmode="decimal" type="number" min=".5" max="20" step=".1" value="${bpmText()}"></div>
-  <div class="panel custom">${names.map((n,i)=>`<div class="field"><label>${labelName(n)}</label><input inputmode="decimal" type="number" min="0" max="120" step=".1" data-i="${i}" value="${secText(pattern()[i])}"></div>`).join("")}</div>
+  <div class="panel"><span>Sound</span><div class="soundgrid">${sounds.map(s=>`<button class="sound ${s[0]===data.sound?"selected":""}" data-s="${s[0]}">${s[1]}</button>`).join("")}</div></div>
   <div class="panel duration"><span>Duration</span><b id="dur">${data.duration} min</b><input id="range" type="range" min="1" max="30" step="1" value="${data.duration}"></div>
+  <details class="panel advanced"><summary>Advanced timings</summary><div class="custom">${names.map((n,i)=>`<div class="field"><label>${labelName(n)}</label><input inputmode="decimal" type="number" min="0" max="120" step=".1" data-i="${i}" value="${secText(pattern()[i])}"></div>`).join("")}</div></details>
   <button class="primary" id="start">Start</button>`;
   document.getElementById("back").onclick=renderHome;
   document.getElementById("reset").onclick=()=>{data.patterns[data.preset]=defaults[data.preset].slice();refreshPhaseInputs();sync();save()};
@@ -230,26 +284,38 @@ function renderSetup(){
   range.oninput=()=>{data.duration=+range.value;dur.textContent=data.duration+" min";save()};
   const bpm=document.getElementById("bpm"),cycle=document.getElementById("cycle");
   const sync=()=>{bpm.value=bpmText();cycle.textContent=cycleTextShort();setStart(start)};
-  bpm.oninput=()=>{scaleToBpm(bpm.value);refreshPhaseInputs();sync();save()};
+  bpm.onchange=()=>{scaleToBpm(bpm.value);refreshPhaseInputs();sync();save()};
   app.querySelectorAll("input[data-i]").forEach(input=>input.oninput=()=>{data.patterns[data.preset][+input.dataset.i]=clean(input.value);sync();save()});
+  app.querySelectorAll(".sound").forEach(b=>b.onclick=()=>{data.sound=b.dataset.s;app.querySelectorAll(".sound").forEach(x=>x.classList.toggle("selected",x===b));save();previewSound(data.sound)});
   sync();
   start.onclick=startSession;
 }
 function setStart(btn){btn.disabled=pattern().reduce((a,b)=>a+b,0)<=0}
 async function startSession(){
+  clearTimeout(previewTimer);
   await ensureAudio();
   const pat=pattern(),phases=makePhases(pat),cycle=phases.reduce((s,p)=>s+p.d,0);
   if(!cycle)return;
   session={pattern:pat,phases,cycle,total:data.duration*60,base:0,started:audioTime(),running:true,ended:false};
   app.className="app session";
-  app.innerHTML=`<div class="corner time" id="time"></div><button class="corner mute" id="mute">${audio.muted?"Sound":"Mute"}</button><button class="corner end" id="end">End</button><div class="orb" id="orb"></div><div class="phase" id="phase"></div><div class="paused" id="paused">Paused</div>`;
-  session.orb=document.getElementById("orb");session.label=document.getElementById("phase");session.time=document.getElementById("time");session.pauseNote=document.getElementById("paused");
+  app.innerHTML=`<div class="corner time" id="time"></div><button class="corner mute" id="mute">${audio.muted?"Sound":"Mute"}</button><button class="corner pick" id="snd">${soundLabel()}</button><button class="corner end" id="end">End</button><div class="orb" id="orb"></div><div class="phase" id="phase"></div><div class="pause" id="pause"><div class="pausebox"><button class="smallbtn" id="resume">Resume</button><button class="smallbtn muted" id="psound">${soundLabel()}</button><button class="smallbtn muted" id="pend">End</button><button class="smallbtn muted" id="phome">Home</button></div></div>`;
+  session.orb=document.getElementById("orb");session.label=document.getElementById("phase");session.time=document.getElementById("time");
   const mute=document.getElementById("mute");
   ["pointerdown","pointerup","click"].forEach(ev=>mute.addEventListener(ev,e=>e.stopPropagation()));
   mute.onclick=()=>{audio.muted=!audio.muted;mute.textContent=audio.muted?"Sound":"Mute";if(audio.muted)silenceAudio()};
+  const snd=document.getElementById("snd");
+  ["pointerdown","pointerup","click"].forEach(ev=>snd.addEventListener(ev,e=>e.stopPropagation()));
+  snd.onclick=()=>{cycleSound();syncSoundButtons();save()};
   const end=document.getElementById("end");
   ["pointerdown","pointerup","click"].forEach(ev=>end.addEventListener(ev,e=>e.stopPropagation()));
   end.onclick=()=>finish(true);
+  const pause=document.getElementById("pause"),resume=document.getElementById("resume"),psound=document.getElementById("psound"),pend=document.getElementById("pend"),phome=document.getElementById("phome");
+  [pause,resume,psound,pend,phome].forEach(el=>["pointerdown","pointerup","click"].forEach(ev=>el.addEventListener(ev,e=>e.stopPropagation())));
+  session.pauseNote=pause;session.soundButtons=[snd,psound];
+  resume.onclick=togglePause;
+  psound.onclick=()=>{cycleSound();syncSoundButtons();save();previewSound(data.sound)};
+  pend.onclick=()=>finish(true);
+  phome.onclick=renderHome;
   app.onpointerdown=pressStart;
   app.onpointerup=pressEnd;
   app.onpointercancel=pressCancel;
@@ -260,6 +326,7 @@ function pressEnd(){clearTimeout(holdTimer);if(!longPress)togglePause()}
 function pressCancel(){clearTimeout(holdTimer)}
 function togglePause(){
   if(!session||session.ended)return;
+  clearTimeout(previewTimer);
   if(session.running){session.base=elapsed();session.running=false;session.pauseNote.classList.add("show");releaseWake();silenceAudio();cancelAnimationFrame(raf);renderMotion(session.base)}
   else{session.started=audioTime();session.running=true;session.pauseNote.classList.remove("show");acquireWake();tick()}
 }
@@ -270,7 +337,8 @@ function finish(manual=false){
   const cycles=total/session.cycle;
   app.onpointerdown=app.onpointerup=app.onpointercancel=null;
   app.className="app done";
-  app.innerHTML=`<h1>Done</h1><div class="stats"><div>${cycleText(cycles)}</div><div>${fmt(total)} elapsed</div>${manual?`<div>Ended early</div>`:""}</div><button class="primary" id="home">Home</button>`;
+  app.innerHTML=`<h1>Done</h1><div class="stats"><div>${cycleText(cycles)}</div><div>${fmt(total)} elapsed</div>${manual?`<div>Ended early</div>`:""}</div><div class="actions"><button class="primary" id="again">Again</button><button class="smallbtn muted" id="home">Home</button></div>`;
+  document.getElementById("again").onclick=startSession;
   document.getElementById("home").onclick=renderHome;
 }
 function pattern(id=data.preset){return data.patterns[id]||defaults[id]}
@@ -284,6 +352,11 @@ function bpmText(){const s=pattern().reduce((a,b)=>a+b,0);return s?(60/s).toFixe
 function cycleTextShort(){const s=pattern().reduce((a,b)=>a+b,0);return s?`${secText(s)} sec cycle`:"No active phases"}
 function secText(v){return Number.isInteger(v)?String(v):(+v).toFixed(1)}
 function tileMeta(id){const p=pattern(id),s=p.reduce((a,b)=>a+b,0),b=s?(60/s).toFixed(1):"0";return `${b} breaths/min - ${p.map(secText).join(" / ")} sec`}
+function soundLabel(){return (sounds.find(s=>s[0]===data.sound)||sounds[0])[1]}
+function cycleSound(){const i=sounds.findIndex(s=>s[0]===data.sound);data.sound=sounds[(i+1)%sounds.length][0]}
+function syncSoundButtons(){if(session&&session.soundButtons)session.soundButtons.forEach(b=>b.textContent=soundLabel())}
+function presetName(id=data.preset){return (presets.find(p=>p[0]===id)||presets[0])[1]}
+function quickMeta(){return `${presetName()} - ${data.duration} min - ${soundLabel()}`}
 function labelName(n){return n==="holdIn"?"Hold in":n==="holdOut"?"Hold out":n[0].toUpperCase()+n.slice(1)}
 function fmt(s){s=Math.ceil(s);return `${Math.floor(s/60)}:${String(s%60).padStart(2,"0")}`}
 function cycleText(n){return `${(Math.round(n*10)/10).toLocaleString(undefined,{maximumFractionDigits:1})} cycles`}
