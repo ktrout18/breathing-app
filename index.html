@@ -1,0 +1,293 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#071014">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Breath">
+<title>Breath</title>
+<style>
+:root{color-scheme:dark;--bg:#071014;--panel:#101b20;--line:#26373d;--text:#eff7f5;--muted:#99aaa9;--accent:#98c8ba}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;background:var(--bg);color:var(--text);overflow:hidden;-webkit-user-select:none;user-select:none}
+button,input{font:inherit;color:inherit}
+button{border:0;background:none}
+.app{min-height:100dvh;padding:calc(24px + env(safe-area-inset-top)) 20px calc(24px + env(safe-area-inset-bottom));display:flex;flex-direction:column}
+.home{justify-content:center;gap:28px}
+.title{font-size:clamp(34px,13vw,64px);font-weight:200;letter-spacing:0;line-height:1;margin:0}
+.tiles{display:grid;gap:12px}
+.tile,.panel{background:rgba(255,255,255,.035);border:1px solid var(--line);border-radius:8px}
+.tile{min-height:74px;padding:18px;text-align:left}
+.tile:active,.primary:active,.ghost:active{transform:scale(.985)}
+.tile strong{display:block;font-weight:300;font-size:20px}
+.tile span{display:block;margin-top:7px;color:var(--muted);font-size:13px}
+.selected{border-color:rgba(152,200,186,.7)}
+.setup{justify-content:center;gap:22px}
+.topline{display:flex;align-items:center;justify-content:space-between;gap:14px}
+.setup h1,.done h1{font-size:32px;font-weight:200;margin:0;line-height:1.1}
+.ghost{color:var(--muted);padding:12px 0}
+.panel{padding:18px;display:grid;gap:16px}
+.rhythm{grid-template-columns:1fr 108px;align-items:center}
+.rhythm small{display:block;color:var(--muted);font-size:12px;margin-top:6px}
+.rhythm input{height:48px;text-align:center;background:#071014;border:1px solid var(--line);border-radius:7px;font-weight:300}
+.custom{grid-template-columns:repeat(4,1fr);gap:10px}
+.field label{display:block;font-size:11px;color:var(--muted);margin-bottom:7px}
+.field input{width:100%;height:42px;text-align:center;background:#071014;border:1px solid var(--line);border-radius:7px;font-weight:300}
+.duration{display:grid;gap:14px}
+.duration b{font-size:44px;font-weight:200;line-height:1}
+input[type=range]{width:100%;accent-color:var(--accent)}
+.primary{width:100%;min-height:64px;border-radius:8px;background:var(--accent);color:#06100e;font-size:24px;font-weight:300}
+.primary:disabled{opacity:.35}
+.session{position:relative;align-items:center;justify-content:center;padding:0;touch-action:none}
+.orb{position:absolute;left:50%;top:50%;width:min(76vmin,calc(100vw - 48px),calc(100dvh - 190px));aspect-ratio:1;border-radius:50%;background:radial-gradient(circle at 38% 34%,#c9e2da 0,#98c8ba 42%,#5f8f83 100%);box-shadow:0 0 48px rgba(152,200,186,.24),inset 0 0 40px rgba(255,255,255,.15);transform:translate(-50%,-50%) scale(.3);will-change:transform}
+.phase{position:relative;z-index:1;font-size:clamp(44px,16vw,88px);font-weight:200;letter-spacing:0;opacity:0;transition:opacity .12s linear;pointer-events:none}
+.corner{position:absolute;z-index:2;top:calc(18px + env(safe-area-inset-top));font-size:14px;color:var(--muted)}
+.time{left:18px}
+.mute{right:18px;padding:8px 0;color:var(--muted)}
+.paused{position:absolute;bottom:calc(24px + env(safe-area-inset-bottom));color:var(--muted);font-size:14px;opacity:0}
+.paused.show{opacity:1}
+.done{justify-content:center;gap:24px;text-align:center}
+.stats{color:var(--muted);line-height:1.8;font-weight:300}
+@media (min-width:700px){.app{max-width:720px;margin:0 auto}.tiles{grid-template-columns:repeat(2,1fr)}.tile:last-child{grid-column:1/-1}.session{max-width:none}.orb{width:min(68vmin,620px)}}
+</style>
+</head>
+<body>
+<main id="app" class="app"></main>
+<script>
+// state
+const defaults={coherent:[5,0,5,0],box:[4,4,4,4],"478":[4,7,8,0],diaphragmatic:[4,0,6,0],custom:[4,0,6,0]};
+const presets=[
+  ["coherent","Coherent breathing"],
+  ["box","Box breathing"],
+  ["478","4-7-8"],
+  ["diaphragmatic","Diaphragmatic"],
+  ["custom","Custom"]
+];
+const names=["inhale","holdIn","exhale","holdOut"],labels=["Inhale","Hold","Exhale","Hold"];
+const app=document.getElementById("app");
+let data={preset:"coherent",patterns:copy(defaults),duration:5};
+let view="home",session=null,raf=0,holdTimer=0,longPress=false,wake=null;
+let audio={ctx:null,osc:null,air:null,drone:null,tone:null,airGain:null,droneGain:null,filter:null,delay:null,wet:null,fb:null,master:null,muted:false};
+
+// persistence
+function load(){
+  try{
+    const saved=JSON.parse(localStorage.getItem("breath.app")||"{}");
+    if(saved.preset)data.preset=saved.preset;
+    if(saved.patterns)for(const id in defaults)if(Array.isArray(saved.patterns[id]))data.patterns[id]=saved.patterns[id].map(clean);
+    if(Array.isArray(saved.custom)&&saved.custom.length===4)data.patterns.custom=saved.custom.map(clean);
+    if(saved.duration)data.duration=Math.min(30,Math.max(1,+saved.duration||5));
+  }catch(e){}
+}
+function save(){
+  try{localStorage.setItem("breath.app",JSON.stringify(data));}catch(e){}
+}
+function clean(v){return Math.min(120,Math.max(0,Math.round((+v||0)*10)/10))}
+function copy(o){return JSON.parse(JSON.stringify(o))}
+
+// audio
+function audioTime(){return audio.ctx?audio.ctx.currentTime:performance.now()/1000}
+async function ensureAudio(){
+  const AC=window.AudioContext||window.webkitAudioContext;
+  if(!AC)return;
+  if(!audio.ctx){
+    audio.ctx=new AC();
+    audio.osc=audio.ctx.createOscillator();
+    audio.air=audio.ctx.createOscillator();
+    audio.drone=audio.ctx.createOscillator();
+    audio.tone=audio.ctx.createGain();
+    audio.airGain=audio.ctx.createGain();
+    audio.droneGain=audio.ctx.createGain();
+    audio.filter=audio.ctx.createBiquadFilter();
+    audio.delay=audio.ctx.createDelay(.5);
+    audio.wet=audio.ctx.createGain();
+    audio.fb=audio.ctx.createGain();
+    audio.master=audio.ctx.createGain();
+    audio.osc.type="sine";
+    audio.air.type="sine";
+    audio.drone.type="sine";
+    audio.osc.frequency.value=206;
+    audio.air.frequency.value=412;
+    audio.drone.frequency.value=98;
+    audio.tone.gain.value=audio.airGain.gain.value=audio.droneGain.gain.value=audio.master.gain.value=0;
+    audio.filter.type="lowpass";
+    audio.filter.frequency.value=840;
+    audio.filter.Q.value=.45;
+    audio.delay.delayTime.value=.16;
+    audio.wet.gain.value=.045;
+    audio.fb.gain.value=.14;
+    audio.osc.connect(audio.tone);audio.tone.connect(audio.filter);
+    audio.air.connect(audio.airGain);audio.airGain.connect(audio.filter);
+    audio.drone.connect(audio.droneGain);audio.droneGain.connect(audio.filter);
+    audio.filter.connect(audio.master);
+    audio.filter.connect(audio.delay);audio.delay.connect(audio.wet);audio.wet.connect(audio.master);
+    audio.delay.connect(audio.fb);audio.fb.connect(audio.delay);
+    audio.master.connect(audio.ctx.destination);
+    audio.osc.start();audio.air.start();audio.drone.start();
+  }
+  if(audio.ctx.state==="suspended")await audio.ctx.resume();
+}
+function ramp(param,value,delay=.09){
+  if(!audio.ctx)return;
+  const t=audio.ctx.currentTime;
+  param.cancelScheduledValues(t);
+  param.setValueAtTime(param.value,t);
+  param.linearRampToValueAtTime(value,t+delay);
+}
+function shapeAudio(p){
+  if(!audio.ctx||!audio.master)return;
+  let freq=206,tone=0,air=0,drone=0,master=0;
+  if(!audio.muted&&session&&session.running){
+    const swell=Math.sin(Math.PI*p.t);
+    master=.82;
+    if(p.kind===0){freq=206+112*p.ease;tone=.022+.018*swell;air=.004+.005*swell;drone=.0015}
+    else if(p.kind===2){freq=318-112*p.ease;tone=.02+.016*swell;air=.003+.004*swell;drone=.0015}
+    else{freq=p.kind===1?318:206;drone=.0045}
+  }
+  ramp(audio.osc.frequency,freq);
+  ramp(audio.air.frequency,freq*2.01);
+  ramp(audio.drone.frequency,p.kind===1?103:94,.14);
+  ramp(audio.tone.gain,tone);
+  ramp(audio.airGain.gain,air);
+  ramp(audio.droneGain.gain,drone,.12);
+  ramp(audio.master.gain,master,.08);
+}
+function silenceAudio(){
+  if(audio.master)ramp(audio.master.gain,0,.06);
+  if(audio.tone)ramp(audio.tone.gain,0,.06);
+  if(audio.airGain)ramp(audio.airGain.gain,0,.06);
+  if(audio.droneGain)ramp(audio.droneGain.gain,0,.06);
+}
+
+// animation
+function makePhases(pattern){
+  return pattern.map((d,i)=>({d:+d||0,i})).filter(p=>p.d>0);
+}
+function phaseAt(elapsed){
+  const cycle=session.cycle;
+  let t=((elapsed%cycle)+cycle)%cycle;
+  for(const p of session.phases){
+    if(t<p.d){
+      const x=t/p.d,ease=.5-.5*Math.cos(Math.PI*x);
+      let scale=p.i===0?.3+.7*ease:p.i===2?1-.7*ease:p.i===1?1:.3;
+      let fade=Math.min(1,x*4,(1-x)*4);
+      if(p.d<2)fade=Math.min(1,x*6);
+      return {kind:p.i,label:labels[p.i],t:x,ease,scale,fade};
+    }
+    t-=p.d;
+  }
+  return {kind:3,label:"Hold",t:1,ease:1,scale:.3,fade:1};
+}
+function elapsed(){
+  if(!session)return 0;
+  return session.base+(session.running?audioTime()-session.started:0);
+}
+function tick(){
+  if(!session)return;
+  const e=Math.min(session.total,elapsed());
+  renderMotion(e);
+  if(e>=session.total){finish();return}
+  if(session.running)raf=requestAnimationFrame(tick);
+}
+function renderMotion(e){
+  const p=phaseAt(e),left=Math.max(0,session.total-e);
+  session.orb.style.transform=`translate(-50%,-50%) scale(${p.scale.toFixed(4)})`;
+  session.label.textContent=p.label;
+  session.label.style.opacity=p.fade.toFixed(3);
+  session.time.textContent=fmt(left);
+  shapeAudio(p);
+}
+
+// UI
+function renderHome(){
+  view="home";cancelAnimationFrame(raf);session=null;releaseWake();silenceAudio();
+  app.className="app home";
+  app.innerHTML=`<h1 class="title">Breathe</h1><div class="tiles">${presets.map(p=>`<button class="tile ${p[0]===data.preset?"selected":""}" data-p="${p[0]}"><strong>${p[1]}</strong><span>${pattern(p[0]).join(" / ")} sec</span></button>`).join("")}</div>`;
+  app.querySelectorAll(".tile").forEach(b=>b.onclick=()=>selectPreset(b.dataset.p));
+}
+function selectPreset(id){
+  data.preset=id;save();renderSetup();
+}
+function renderSetup(){
+  view="setup";
+  const p=presets.find(x=>x[0]===data.preset);
+  app.className="app setup";
+  app.innerHTML=`<div class="topline"><button class="ghost" id="back">Home</button><h1>${p[1]}</h1></div>
+  <div class="panel rhythm"><div><span>Breaths / minute</span><small id="cycle"></small></div><input id="bpm" inputmode="decimal" type="number" min=".5" max="20" step=".1" value="${bpmText()}"></div>
+  <div class="panel custom">${names.map((n,i)=>`<div class="field"><label>${labelName(n)}</label><input inputmode="decimal" type="number" min="0" max="120" step=".1" data-i="${i}" value="${secText(pattern()[i])}"></div>`).join("")}</div>
+  <div class="panel duration"><span>Duration</span><b id="dur">${data.duration} min</b><input id="range" type="range" min="1" max="30" step="1" value="${data.duration}"></div>
+  <button class="primary" id="start">Start</button>`;
+  document.getElementById("back").onclick=renderHome;
+  const range=document.getElementById("range"),dur=document.getElementById("dur"),start=document.getElementById("start");
+  range.oninput=()=>{data.duration=+range.value;dur.textContent=data.duration+" min";save()};
+  const bpm=document.getElementById("bpm"),cycle=document.getElementById("cycle");
+  const sync=()=>{bpm.value=bpmText();cycle.textContent=cycleTextShort();setStart(start)};
+  bpm.oninput=()=>{scaleToBpm(bpm.value);refreshPhaseInputs();sync();save()};
+  app.querySelectorAll("input[data-i]").forEach(input=>input.oninput=()=>{data.patterns[data.preset][+input.dataset.i]=clean(input.value);sync();save()});
+  sync();
+  start.onclick=startSession;
+}
+function setStart(btn){btn.disabled=pattern().reduce((a,b)=>a+b,0)<=0}
+async function startSession(){
+  await ensureAudio();
+  const pat=pattern(),phases=makePhases(pat),cycle=phases.reduce((s,p)=>s+p.d,0);
+  if(!cycle)return;
+  session={pattern:pat,phases,cycle,total:data.duration*60,base:0,started:audioTime(),running:true,ended:false};
+  app.className="app session";
+  app.innerHTML=`<div class="corner time" id="time"></div><button class="corner mute" id="mute">${audio.muted?"Sound":"Mute"}</button><div class="orb" id="orb"></div><div class="phase" id="phase"></div><div class="paused" id="paused">Paused</div>`;
+  session.orb=document.getElementById("orb");session.label=document.getElementById("phase");session.time=document.getElementById("time");session.pauseNote=document.getElementById("paused");
+  const mute=document.getElementById("mute");
+  ["pointerdown","pointerup","click"].forEach(ev=>mute.addEventListener(ev,e=>e.stopPropagation()));
+  mute.onclick=()=>{audio.muted=!audio.muted;mute.textContent=audio.muted?"Sound":"Mute";if(audio.muted)silenceAudio()};
+  app.onpointerdown=pressStart;
+  app.onpointerup=pressEnd;
+  app.onpointercancel=pressCancel;
+  acquireWake();tick();
+}
+function pressStart(){longPress=false;clearTimeout(holdTimer);holdTimer=setTimeout(()=>{longPress=true;finish(true)},1000)}
+function pressEnd(){clearTimeout(holdTimer);if(!longPress)togglePause()}
+function pressCancel(){clearTimeout(holdTimer)}
+function togglePause(){
+  if(!session||session.ended)return;
+  if(session.running){session.base=elapsed();session.running=false;session.pauseNote.classList.add("show");releaseWake();silenceAudio();cancelAnimationFrame(raf);renderMotion(session.base)}
+  else{session.started=audioTime();session.running=true;session.pauseNote.classList.remove("show");acquireWake();tick()}
+}
+function finish(manual=false){
+  if(!session||session.ended)return;
+  const total=Math.min(session.total,elapsed());
+  session.ended=true;session.running=false;cancelAnimationFrame(raf);releaseWake();silenceAudio();
+  const cycles=total/session.cycle;
+  app.onpointerdown=app.onpointerup=app.onpointercancel=null;
+  app.className="app done";
+  app.innerHTML=`<h1>Done</h1><div class="stats"><div>${cycleText(cycles)}</div><div>${fmt(total)} elapsed</div>${manual?`<div>Ended early</div>`:""}</div><button class="primary" id="home">Home</button>`;
+  document.getElementById("home").onclick=renderHome;
+}
+function pattern(id=data.preset){return data.patterns[id]||defaults[id]}
+function refreshPhaseInputs(){app.querySelectorAll("input[data-i]").forEach(input=>input.value=secText(pattern()[+input.dataset.i]))}
+function scaleToBpm(v){
+  const bpm=+v,total=bpm>0?60/bpm:0,pat=pattern(),sum=pat.reduce((a,b)=>a+b,0);
+  if(!total||!sum)return;
+  data.patterns[data.preset]=pat.map(d=>d?clean(d*total/sum):0);
+}
+function bpmText(){const s=pattern().reduce((a,b)=>a+b,0);return s?(60/s).toFixed(1):""}
+function cycleTextShort(){const s=pattern().reduce((a,b)=>a+b,0);return s?`${secText(s)} sec cycle`:"No active phases"}
+function secText(v){return Number.isInteger(v)?String(v):(+v).toFixed(1)}
+function labelName(n){return n==="holdIn"?"Hold in":n==="holdOut"?"Hold out":n[0].toUpperCase()+n.slice(1)}
+function fmt(s){s=Math.ceil(s);return `${Math.floor(s/60)}:${String(s%60).padStart(2,"0")}`}
+function cycleText(n){return `${(Math.round(n*10)/10).toLocaleString(undefined,{maximumFractionDigits:1})} cycles`}
+
+// wake lock
+async function acquireWake(){
+  try{if("wakeLock"in navigator){wake=await navigator.wakeLock.request("screen");wake.addEventListener("release",()=>wake=null)}}catch(e){}
+}
+function releaseWake(){if(wake){wake.release().catch(()=>{});wake=null}}
+document.addEventListener("visibilitychange",()=>{releaseWake();if(document.hidden&&session&&session.running)togglePause()});
+
+load();renderHome();
+</script>
+</body>
+</html>
