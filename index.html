@@ -28,6 +28,8 @@ button{border:0;background:none}
 .selected{border-color:rgba(152,200,186,.7)}
 .setup{justify-content:center;gap:22px}
 .topline{display:flex;align-items:center;justify-content:space-between;gap:14px}
+.setup .topline h1{flex:1;text-align:center;font-size:clamp(24px,7vw,32px)}
+.topline .ghost{min-width:54px}
 .setup h1,.done h1{font-size:32px;font-weight:200;margin:0;line-height:1.1}
 .ghost{color:var(--muted);padding:12px 0}
 .panel{padding:18px;display:grid;gap:16px}
@@ -48,6 +50,7 @@ input[type=range]{width:100%;accent-color:var(--accent)}
 .corner{position:absolute;z-index:2;top:calc(18px + env(safe-area-inset-top));font-size:14px;color:var(--muted)}
 .time{left:18px}
 .mute{right:18px;padding:8px 0;color:var(--muted)}
+.end{right:18px;top:calc(52px + env(safe-area-inset-top));padding:8px 0;color:var(--muted)}
 .paused{position:absolute;bottom:calc(24px + env(safe-area-inset-bottom));color:var(--muted);font-size:14px;opacity:0}
 .paused.show{opacity:1}
 .done{justify-content:center;gap:24px;text-align:center}
@@ -206,7 +209,7 @@ function renderMotion(e){
 function renderHome(){
   view="home";cancelAnimationFrame(raf);session=null;releaseWake();silenceAudio();
   app.className="app home";
-  app.innerHTML=`<h1 class="title">Breathe</h1><div class="tiles">${presets.map(p=>`<button class="tile ${p[0]===data.preset?"selected":""}" data-p="${p[0]}"><strong>${p[1]}</strong><span>${pattern(p[0]).join(" / ")} sec</span></button>`).join("")}</div>`;
+  app.innerHTML=`<h1 class="title">Breathe</h1><div class="tiles">${presets.map(p=>`<button class="tile ${p[0]===data.preset?"selected":""}" data-p="${p[0]}"><strong>${p[1]}</strong><span>${tileMeta(p[0])}</span></button>`).join("")}</div>`;
   app.querySelectorAll(".tile").forEach(b=>b.onclick=()=>selectPreset(b.dataset.p));
 }
 function selectPreset(id){
@@ -216,12 +219,13 @@ function renderSetup(){
   view="setup";
   const p=presets.find(x=>x[0]===data.preset);
   app.className="app setup";
-  app.innerHTML=`<div class="topline"><button class="ghost" id="back">Home</button><h1>${p[1]}</h1></div>
+  app.innerHTML=`<div class="topline"><button class="ghost" id="back">Home</button><h1>${p[1]}</h1><button class="ghost" id="reset">Reset</button></div>
   <div class="panel rhythm"><div><span>Breaths / minute</span><small id="cycle"></small></div><input id="bpm" inputmode="decimal" type="number" min=".5" max="20" step=".1" value="${bpmText()}"></div>
   <div class="panel custom">${names.map((n,i)=>`<div class="field"><label>${labelName(n)}</label><input inputmode="decimal" type="number" min="0" max="120" step=".1" data-i="${i}" value="${secText(pattern()[i])}"></div>`).join("")}</div>
   <div class="panel duration"><span>Duration</span><b id="dur">${data.duration} min</b><input id="range" type="range" min="1" max="30" step="1" value="${data.duration}"></div>
   <button class="primary" id="start">Start</button>`;
   document.getElementById("back").onclick=renderHome;
+  document.getElementById("reset").onclick=()=>{data.patterns[data.preset]=defaults[data.preset].slice();refreshPhaseInputs();sync();save()};
   const range=document.getElementById("range"),dur=document.getElementById("dur"),start=document.getElementById("start");
   range.oninput=()=>{data.duration=+range.value;dur.textContent=data.duration+" min";save()};
   const bpm=document.getElementById("bpm"),cycle=document.getElementById("cycle");
@@ -238,11 +242,14 @@ async function startSession(){
   if(!cycle)return;
   session={pattern:pat,phases,cycle,total:data.duration*60,base:0,started:audioTime(),running:true,ended:false};
   app.className="app session";
-  app.innerHTML=`<div class="corner time" id="time"></div><button class="corner mute" id="mute">${audio.muted?"Sound":"Mute"}</button><div class="orb" id="orb"></div><div class="phase" id="phase"></div><div class="paused" id="paused">Paused</div>`;
+  app.innerHTML=`<div class="corner time" id="time"></div><button class="corner mute" id="mute">${audio.muted?"Sound":"Mute"}</button><button class="corner end" id="end">End</button><div class="orb" id="orb"></div><div class="phase" id="phase"></div><div class="paused" id="paused">Paused</div>`;
   session.orb=document.getElementById("orb");session.label=document.getElementById("phase");session.time=document.getElementById("time");session.pauseNote=document.getElementById("paused");
   const mute=document.getElementById("mute");
   ["pointerdown","pointerup","click"].forEach(ev=>mute.addEventListener(ev,e=>e.stopPropagation()));
   mute.onclick=()=>{audio.muted=!audio.muted;mute.textContent=audio.muted?"Sound":"Mute";if(audio.muted)silenceAudio()};
+  const end=document.getElementById("end");
+  ["pointerdown","pointerup","click"].forEach(ev=>end.addEventListener(ev,e=>e.stopPropagation()));
+  end.onclick=()=>finish(true);
   app.onpointerdown=pressStart;
   app.onpointerup=pressEnd;
   app.onpointercancel=pressCancel;
@@ -276,6 +283,7 @@ function scaleToBpm(v){
 function bpmText(){const s=pattern().reduce((a,b)=>a+b,0);return s?(60/s).toFixed(1):""}
 function cycleTextShort(){const s=pattern().reduce((a,b)=>a+b,0);return s?`${secText(s)} sec cycle`:"No active phases"}
 function secText(v){return Number.isInteger(v)?String(v):(+v).toFixed(1)}
+function tileMeta(id){const p=pattern(id),s=p.reduce((a,b)=>a+b,0),b=s?(60/s).toFixed(1):"0";return `${b} breaths/min - ${p.map(secText).join(" / ")} sec`}
 function labelName(n){return n==="holdIn"?"Hold in":n==="holdOut"?"Hold out":n[0].toUpperCase()+n.slice(1)}
 function fmt(s){s=Math.ceil(s);return `${Math.floor(s/60)}:${String(s%60).padStart(2,"0")}`}
 function cycleText(n){return `${(Math.round(n*10)/10).toLocaleString(undefined,{maximumFractionDigits:1})} cycles`}
